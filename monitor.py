@@ -1,15 +1,13 @@
-import hashlib
 import json
 import os
-import re
 import urllib.request
 from html.parser import HTMLParser
 
-URL = "https://www.woonstadrotterdam.nl/aanbod/vrije-sector-huurwoning"
+WOONSTAD_URL = "https://www.woonstadrotterdam.nl/aanbod/vrije-sector-huurwoning"
 STATE_FILE = "state.json"
 
 NTFY_TOPIC = os.environ["NTFY_TOPIC"]
-NTFY_URL = f"https://ntfy.sh/{NTFY_TOPIC}"
+NTFY_URL = "https://ntfy.sh/" + NTFY_TOPIC
 
 
 class LinkParser(HTMLParser):
@@ -18,119 +16,128 @@ class LinkParser(HTMLParser):
         self.links = []
 
     def handle_starttag(self, tag, attrs):
-        if tag == "a":
-            attrs = dict(attrs)
-            href = attrs.get("href", "")
-            if href:
-                self.links.append(href)
+        if tag != "a":
+            return
+
+        attrs = dict(attrs)
+        href = attrs.get("href", "")
+
+        if href:
+            self.links.append(href)
 
 
-def download_page():
+def get_page():
     request = urllib.request.Request(
-        URL,
+        WOONSTAD_URL,
         headers={
-            "User-Agent": "Mozilla/5.0 (Woonstad listing monitor)"
-        },
+            "User-Agent": "Mozilla/5.0"
+        }
     )
 
     with urllib.request.urlopen(request, timeout=30) as response:
         return response.read().decode("utf-8", errors="ignore")
 
 
-def extract_listing_links(html):
+def get_listings(html):
     parser = LinkParser()
     parser.feed(html)
 
-    links = set()
+    listings = set()
 
-    for link in parser.links:
-        if "woonstadrotterdam.nl" in link:
-            if any(x in link.lower() for x in [
-                "woning",
-                "huur",
-                "aanbod"
-            ]):
-                links.add(link)
+    for href in parser.links:
 
-    return sorted(links)
+        # Woonstad property URLs look like:
+        # /aanbod/vrije-sector-huurwoning/PROPERTY-ID-address
+        if href.startswith("/aanbod/vrije-sector-huurwoning/"):
+            full_url = "https://www.woonstadrotterdam.nl" + href
+            listings.add(full_url)
+
+        elif href.startswith(
+            "https://www.woonstadrotterdam.nl/aanbod/vrije-sector-huurwoning/"
+        ):
+            listings.add(href)
+
+    return sorted(listings)
 
 
-def load_state():
+def load_previous():
     if not os.path.exists(STATE_FILE):
         return []
 
     try:
-        with open(STATE_FILE, "r") as f:
-            return json.load(f)
+        with open(STATE_FILE, "r") as file:
+            return json.load(file)
     except Exception:
         return []
 
 
-def save_state(items):
-    with open(STATE_FILE, "w") as f:
-        json.dump(items, f, indent=2)
+def save_current(listings):
+    with open(STATE_FILE, "w") as file:
+        json.dump(listings, file, indent=2)
 
 
-def notify(new_items):
-    if not new_items:
+def send_notification(new_listings):
+    if not new_listings:
         return
 
     message = (
         "🏠 NIEUWE WOONSTAD WONING!\n\n"
-        + "\n".join(new_items[:10])
-        + "\n\n"
-        + URL
+        + "\n\n".join(new_listings)
     )
 
     request = urllib.request.Request(
         NTFY_URL,
         data=message.encode("utf-8"),
         headers={
-            "Title": "Nieuwe Woonstad woning",
-            "Priority": "urgent",
+            "Title": "Nieuwe Woonstad woning!",
+            "Priority": "max",
             "Tags": "house",
-            "Click": URL,
+            "Click": new_listings[0]
         },
-        method="POST",
+        method="POST"
     )
 
     urllib.request.urlopen(request, timeout=30)
 
 
 def main():
-    html = download_page()
 
-    listings = extract_listing_links(html)
+    print("Checking Woonstad...")
 
-    # Remove duplicates and sort them.
-    listings = sorted(set(listings))
+    html = get_page()
+    current_listings = get_listings(html)
+    previous_listings = load_previous()
 
-    old_listings = load_state()
+    print("Listings found:", len(current_listings))
 
-    # First run establishes the baseline.
-    if not old_listings:
-        save_state(listings)
-        print(f"Initial scan: {len(listings)} links saved.")
+    # FIRST RUN:
+    # Save the current listings but don't send notifications.
+    if not previous_listings:
+        save_current(current_listings)
+
+        print("First run completed.")
+        print("Current listings saved as baseline.")
         return
 
-    new_items = [
-        item for item in listings
-        if item not in old_listings
+    # Find listings that weren't there during the previous check.
+    new_listings = [
+        listing
+        for listing in current_listings
+        if listing not in previous_listings
     ]
 
-    if new_items:
-        print("NEW LISTINGS:")
-        for item in new_items:
-            print(item)
+    if new_listings:
+        print("NEW LISTINGS FOUND!")
 
-        notify(new_items)
+        for listing in new_listings:
+            print(listing)
 
-    save_state(listings)
+        send_notification(new_listings)
 
-    print(
-        f"Checked Woonstad: {len(listings)} links, "
-        f"{len(new_items)} new."
-    )
+    else:
+        print("No new listings.")
+
+    save_current(current_listings)
 
 
 if __name__ == "__main__":
