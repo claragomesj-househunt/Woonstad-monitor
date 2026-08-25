@@ -1,7 +1,8 @@
 import json
 import os
+import re
 import urllib.request
-from html.parser import HTMLParser
+from playwright.sync_api import sync_playwright
 
 WOONSTAD_URL = "https://www.woonstadrotterdam.nl/aanbod/vrije-sector-huurwoning"
 STATE_FILE = "state.json"
@@ -10,79 +11,81 @@ NTFY_TOPIC = os.environ["NTFY_TOPIC"]
 NTFY_URL = "https://ntfy.sh/" + NTFY_TOPIC
 
 
-class LinkParser(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.links = []
+def get_listings():
 
-    def handle_starttag(self, tag, attrs):
-        if tag != "a":
-            return
+    with sync_playwright() as p:
 
-        attrs = dict(attrs)
-        href = attrs.get("href", "")
+        browser = p.chromium.launch(headless=True)
 
-        if href:
-            self.links.append(href)
+        page = browser.new_page(
+            user_agent=(
+                "Mozilla/5.0 (X11; Linux x86_64) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/130 Safari/537.36"
+            )
+        )
 
+        print("Opening Woonstad...")
 
-def get_page():
-    request = urllib.request.Request(
-        WOONSTAD_URL,
-        headers={
-            "User-Agent": "Mozilla/5.0"
-        }
-    )
+        page.goto(
+            WOONSTAD_URL,
+            wait_until="domcontentloaded",
+            timeout=60000
+        )
 
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return response.read().decode("utf-8", errors="ignore")
+        # Give the Woonstad application time to load the properties.
+        page.wait_for_timeout(10000)
 
+        links = page.locator(
+            'a[href*="/aanbod/vrije-sector-huurwoning/"]'
+        ).all()
 
-def get_listings(html):
-    parser = LinkParser()
-    parser.feed(html)
+        listings = set()
 
-    listings = set()
+        for link in links:
 
-    for href in parser.links:
+            href = link.get_attribute("href")
 
-        # Woonstad property URLs look like:
-        # /aanbod/vrije-sector-huurwoning/PROPERTY-ID-address
-        if href.startswith("/aanbod/vrije-sector-huurwoning/"):
-            full_url = "https://www.woonstadrotterdam.nl" + href
-            listings.add(full_url)
+            if not href:
+                continue
 
-        elif href.startswith(
-            "https://www.woonstadrotterdam.nl/aanbod/vrije-sector-huurwoning/"
-        ):
-            listings.add(href)
+            if href.startswith("/"):
+                href = "https://www.woonstadrotterdam.nl" + href
 
-    return sorted(listings)
+            if "/aanbod/vrije-sector-huurwoning/" in href:
+                listings.add(href.split("?")[0])
+
+        browser.close()
+
+        return sorted(listings)
 
 
 def load_previous():
+
     if not os.path.exists(STATE_FILE):
         return []
 
     try:
-        with open(STATE_FILE, "r") as file:
-            return json.load(file)
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
     except Exception:
         return []
 
 
 def save_current(listings):
-    with open(STATE_FILE, "w") as file:
-        json.dump(listings, file, indent=2)
+
+    with open(STATE_FILE, "w") as f:
+        json.dump(listings, f, indent=2)
 
 
-def send_notification(new_listings):
+def notify(new_listings):
+
     if not new_listings:
         return
 
     message = (
         "🏠 NIEUWE WOONSTAD WONING!\n\n"
-        + "\n\n".join(new_listings)
+        + "\n\n".join(new_listings[:10])
     )
 
     request = urllib.request.Request(
@@ -92,9 +95,9 @@ def send_notification(new_listings):
             "Title": "Nieuwe Woonstad woning!",
             "Priority": "max",
             "Tags": "house",
-            "Click": new_listings[0]
+            "Click": new_listings[0],
         },
-        method="POST"
+        method="POST",
     )
 
     urllib.request.urlopen(request, timeout=30)
@@ -104,40 +107,40 @@ def main():
 
     print("Checking Woonstad...")
 
-    html = get_page()
-    current_listings = get_listings(html)
-    previous_listings = load_previous()
+    current = get_listings()
 
-    print("Listings found:", len(current_listings))
+    print("Listings found:", len(current))
 
-    # FIRST RUN:
-    # Save the current listings but don't send notifications.
-    if not previous_listings:
-        save_current(current_listings)
+    previous = load_previous()
+
+    if not previous:
+
+        save_current(current)
 
         print("First run completed.")
         print("Current listings saved as baseline.")
+
         return
 
-    # Find listings that weren't there during the previous check.
-    new_listings = [
+    new = [
         listing
-        for listing in current_listings
-        if listing not in previous_listings
+        for listing in current
+        if listing not in previous
     ]
 
-    if new_listings:
-        print("NEW LISTINGS FOUND!")
+    print("New listings:", len(new))
 
-        for listing in new_listings:
-            print(listing)
+    if new:
 
-        send_notification(new_listings)
+        for listing in new:
+            print("NEW:", listing)
+
+        notify(new)
 
     else:
         print("No new listings.")
 
-    save_current(current_listings)
+    save_current(current)
 
 
 if __name__ == "__main__":
