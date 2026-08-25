@@ -1,9 +1,9 @@
 name: Woonstad monitor
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: "*/5 * * * *"
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,21 +13,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Get files
         uses: actions/checkout@v4
 
-      - name: Run monitor
+      - name: Run Woonstad monitor
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: python monitor.py
 
-      - name: Save state
+      - name: Save listing state
         run: |
           git config user.name "woonstad-monitor"
           git config user.email "woonstad-monitor@users.noreply.github.com"
 
           git add state.json
 
-          git diff --cached --quiet || git commit -m "Update listing state"
+          git diff --cached --quiet || git commit -m "Update Woonstad listing state"
 
           git push
