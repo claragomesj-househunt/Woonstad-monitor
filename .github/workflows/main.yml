@@ -1,0 +1,20 @@
+name: Woonstad monitor
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Test workflow
+        run: echo "Woonstad monitor is working!"
