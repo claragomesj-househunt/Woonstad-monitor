@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import urllib.request
 from playwright.sync_api import sync_playwright
 
@@ -33,7 +32,6 @@ def get_listings():
             timeout=60000
         )
 
-        # Give the Woonstad application time to load the properties.
         page.wait_for_timeout(10000)
 
         links = page.locator(
@@ -144,4 +142,10 @@ def main():
 
 
 if __name__ == "__main__":
+
+    # TEMPORARY PUSH NOTIFICATION TEST
+    notify([
+        "https://www.woonstadrotterdam.nl/aanbod/vrije-sector-huurwoning/TEST"
+    ])
+
     main()
