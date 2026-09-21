@@ -1,0 +1,19 @@
+name: Test ntfy notification
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-notification:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send test notification
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          curl \
+            -H "Title: Woonstad test notification" \
+            -H "Priority: high" \
+            -d "🎉 TEST SUCCESSFUL! Your Woonstad notifications are working on this phone." \
+            "https://ntfy.sh/$NTFY_TOPIC"
